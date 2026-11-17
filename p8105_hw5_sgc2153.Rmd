@@ -92,4 +92,98 @@ birthday_probability_df |>
 
 The estimated probability of at least one shared birthday increases with group size. It is approximately 11.4% for 10 people, 49.5% for 23 people, 71.6% for 30 people, and 97.3% for 50 people. Thus, a shared birthday becomes quite likely even in a group much smaller than 365 people because there are many possible pairs who could share a birthday. These are simulation estimates, so small fluctuations reflect random sampling variation.
 
+## Problem 2
+
+### Import participant data
+
+Each CSV file contains one participant’s weekly observations. I first create a dataframe of file names, then use `map()` to read each file into a list column.
+
+```{r import_longitudinal}
+participant_files_df =
+  tibble(
+    file_name = list.files(
+      path = "data",
+      pattern = "^(con|exp)_[0-9]+\\.csv$"
+    )
+  ) |>
+  mutate(
+    path = str_c("data/", file_name),
+    observations = map(path, read_csv, show_col_types = FALSE)
+  )
+
+participant_files_df
+```
+
+### Tidy weekly observations
+
+I extract study arm and subject ID from the file names and reshape the weekly measurements into one row per participant per week. Participant identifiers include the arm because subject numbers repeat across arms.
+
+```{r tidy_longitudinal}
+longitudinal_df =
+  participant_files_df |>
+  select(file_name, observations) |>
+  mutate(
+    participant = str_remove(file_name, "\\.csv$")
+  ) |>
+  separate(
+    participant,
+    into = c("arm", "subject_id"),
+    sep = "_",
+    remove = FALSE
+  ) |>
+  mutate(
+    arm = recode(
+      arm,
+      con = "Control",
+      exp = "Experimental"
+    )
+  ) |>
+  unnest(cols = observations) |>
+  pivot_longer(
+    cols = starts_with("week_"),
+    names_to = "week",
+    names_prefix = "week_",
+    values_to = "outcome"
+  ) |>
+  mutate(week = as.integer(week)) |>
+  select(participant, subject_id, arm, week, outcome)
+
+longitudinal_df
+```
+
+### Individual trajectories over time
+
+```{r longitudinal_spaghetti}
+longitudinal_df |>
+  ggplot(
+    aes(
+      x = week,
+      y = outcome,
+      group = participant,
+      color = arm
+    )
+  ) +
+  geom_line(alpha = 0.7, linewidth = 0.7) +
+  geom_point(size = 1.5, alpha = 0.8) +
+  facet_grid(. ~ arm) +
+  scale_x_continuous(breaks = 1:8) +
+  scale_color_manual(
+    values = c(
+      "Control" = "#0072B2",
+      "Experimental" = "#D55E00"
+    )
+  ) +
+  labs(
+    title = "Participant outcomes over eight weeks",
+    subtitle = "Each line represents one participant",
+    x = "Week",
+    y = "Outcome"
+  ) +
+  theme(legend.position = "none")
+```
+
+The dataset contains 20 participants, with 10 in each study arm and eight weekly observations per participant. There are no missing outcomes. Control participants show week-to-week fluctuations without a clear overall increase. In contrast, experimental participants generally show increasing outcomes over time, although individual trajectories vary. The groups overlap initially but become more separated in later weeks, with experimental participants generally having higher outcomes. This plot provides descriptive evidence of different trajectories between the study arms; it does not establish statistical significance.
+
+
+
 
