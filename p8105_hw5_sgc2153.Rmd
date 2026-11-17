@@ -20,7 +20,7 @@ theme_set(theme_minimal(base_size = 12))
 
 ## Problem 1
 
-I use simulation to estimate the probability that at least two people share a birthday for group sizes from 2 to 50. Birthdays are assumed to be independent and uniformly distributed across 365 days.
+I used simulation to estimate the probability that at least two people share a birthday for group sizes from 2 to 50. Birthdays are assumed to be independent and uniformly distributed across 365 days.
 
 ### Birthday simulation function
 
@@ -41,7 +41,7 @@ shared_birthday = function(group_size) {
 
 ### Estimated probabilities
 
-I simulate 10,000 groups for each group size and estimate the probability of a shared birthday as the proportion of simulations containing duplicate birthdays.
+I simulated 10,000 groups for each group size and estimated the probability of a shared birthday as the proportion of simulations containing duplicate birthdays.
 
 ```{r birthday_simulation}
 set.seed(2153)
@@ -96,7 +96,7 @@ The estimated probability of at least one shared birthday increases with group s
 
 ### Import participant data
 
-Each CSV file contains one participant’s weekly observations. I first create a dataframe of file names, then use `map()` to read each file into a list column.
+Each CSV file contains one participant’s weekly observations. I first created a dataframe of file names, then use `map()` to read each file into a list column.
 
 ```{r import_longitudinal}
 participant_files_df =
@@ -116,7 +116,7 @@ participant_files_df
 
 ### Tidy weekly observations
 
-I extract study arm and subject ID from the file names and reshape the weekly measurements into one row per participant per week. Participant identifiers include the arm because subject numbers repeat across arms.
+I extracted study arm and subject ID from the file names and reshape the weekly measurements into one row per participant per week. Participant identifiers include the arm because subject numbers repeat across arms.
 
 ```{r tidy_longitudinal}
 longitudinal_df =
@@ -184,6 +184,143 @@ longitudinal_df |>
 
 The dataset contains 20 participants, with 10 in each study arm and eight weekly observations per participant. There are no missing outcomes. Control participants show week-to-week fluctuations without a clear overall increase. In contrast, experimental participants generally show increasing outcomes over time, although individual trajectories vary. The groups overlap initially but become more separated in later weeks, with experimental participants generally having higher outcomes. This plot provides descriptive evidence of different trajectories between the study arms; it does not establish statistical significance.
 
+## Problem 3
 
+### One-sample t-test simulation
 
+I simulated independent samples of 30 observations from a normal distribution with standard deviation 5. For each sample, I estimated the mean and conducted a two-sided one-sample t-test of the null hypothesis that the population mean equals zero.
 
+```{r t_test_function}
+simulate_t_test = function(mu, n = 30, sigma = 5) {
+
+  sample_values = rnorm(
+    n = n,
+    mean = mu,
+    sd = sigma
+  )
+
+  t.test(
+    sample_values,
+    mu = 0,
+    alternative = "two.sided"
+  ) |>
+    broom::tidy() |>
+    select(
+      mu_hat = estimate,
+      p_value = p.value
+    )
+}
+```
+
+### Repeated simulations
+
+I generated 5,000 samples for each true mean from 0 through 6, keeping the sample size at 30 and standard deviation at 5. I reject the null hypothesis when the p-value is below 0.05.
+
+```{r t_test_simulations}
+set.seed(2153)
+
+t_test_results_df =
+  expand_grid(
+    true_mu = 0:6,
+    iteration = 1:5000
+  ) |>
+  mutate(
+    results = map(true_mu, simulate_t_test)
+  ) |>
+  unnest(cols = results) |>
+  mutate(rejected = p_value < 0.05)
+
+t_test_summary_df =
+  t_test_results_df |>
+  group_by(true_mu) |>
+  summarize(
+    n_simulations = n(),
+    rejection_rate = mean(rejected),
+    mean_estimate = mean(mu_hat),
+    mean_estimate_rejected = mean(mu_hat[rejected]),
+    .groups = "drop"
+  )
+```
+
+### Effect size and power
+
+```{r power_plot}
+t_test_summary_df |>
+  ggplot(aes(x = true_mu, y = rejection_rate)) +
+  geom_line(color = "#0072B2", linewidth = 1) +
+  geom_point(color = "#0072B2", size = 2) +
+  geom_hline(
+    yintercept = 0.05,
+    linetype = "dashed",
+    color = "gray50"
+  ) +
+  scale_x_continuous(breaks = 0:6) +
+  scale_y_continuous(
+    labels = scales::label_percent(),
+    limits = c(0, 1)
+  ) +
+  labs(
+    title = "Larger effects are more likely to be detected",
+    subtitle = "5,000 simulations per true mean; n = 30 and SD = 5",
+    x = "True mean",
+    y = "Proportion of tests rejecting the null",
+    caption = "At a true mean of zero, rejection represents Type I error."
+  )
+```
+
+### Mean estimates across all and rejected tests
+
+```{r mean_estimates_plot}
+t_test_summary_df |>
+  select(true_mu, mean_estimate, mean_estimate_rejected) |>
+  pivot_longer(
+    cols = c(mean_estimate, mean_estimate_rejected),
+    names_to = "sample_group",
+    values_to = "average_estimate"
+  ) |>
+  mutate(
+    sample_group = recode(
+      sample_group,
+      mean_estimate = "All samples",
+      mean_estimate_rejected = "Rejected tests only"
+    )
+  ) |>
+  ggplot(
+    aes(
+      x = true_mu,
+      y = average_estimate,
+      color = sample_group
+    )
+  ) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed",
+    color = "gray50"
+  ) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_color_manual(
+    values = c(
+      "All samples" = "#0072B2",
+      "Rejected tests only" = "#D55E00"
+    )
+  ) +
+  scale_x_continuous(breaks = 0:6) +
+  labs(
+    title = "Selecting rejected tests can overestimate small effects",
+    x = "True mean",
+    y = "Average estimated mean",
+    color = NULL,
+    caption = "Dashed line indicates an average estimate equal to the true mean."
+  ) +
+  theme(legend.position = "bottom")
+```
+
+### Interpretation
+
+With sample size and standard deviation fixed, power increases as the true mean moves farther from the null value of zero. Estimated power rises from 18.8% at a true mean of 1 to 55.7% at 2, 88.9% at 3, and 98.7% at 4, approaching 100% at 5 and 6. When the true mean is zero, the rejection rate is 5.58%; this estimates the Type I error rate and is close to the specified significance level of 5%.
+
+Across all simulated samples, the average estimated mean is approximately equal to the true mean. However, restricting the analysis to rejected tests overestimates small positive effects. For example, when the true mean is 1, the average estimate among rejected tests is 2.24; when it is 2, the corresponding average is 2.61. Small positive effects are more likely to produce significant results when sampling variation pushes the estimated mean upward relative to its standard error. Selecting these results therefore introduces selection bias.
+
+As the true mean increases and power approaches 100%, nearly all samples are retained, so the averages for all samples and rejected tests converge. At a true mean of zero, the two-sided test selects both positive and negative extreme estimates. These balance in expectation, explaining why their signed average remains near zero even though the individual selected estimates are far from zero.
